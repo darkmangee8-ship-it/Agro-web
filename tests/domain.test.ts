@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readiness, recommendations } from '../supabase/functions/server/domain'
+import { readiness, recommendations } from '../src/lib/domain'
 
 describe('financial readiness', () => {
   it('does not invent missing financial values', () => {

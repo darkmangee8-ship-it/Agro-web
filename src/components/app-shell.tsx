@@ -35,7 +35,8 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { apiRequest, supabase } from '@/lib/supabase'
+import { authClient } from '@/lib/auth-client'
+import { apiRequest } from '@/lib/api'
 import Brand from './brand'
 
 const sections = [
@@ -82,8 +83,6 @@ export default function AppShell({ section }: { section: string }) {
 
   async function load() {
     try {
-      const { data: auth } = await supabase.auth.getSession()
-      if (!auth.session) return router.replace('/sign-in')
       const bootstrap = await apiRequest<Bootstrap>('/bootstrap')
       setData(bootstrap)
       if (section === 'weather' || section === 'dashboard') {
@@ -97,6 +96,9 @@ export default function AppShell({ section }: { section: string }) {
           .catch((error) => setMessage(error.message))
       }
     } catch (error) {
+      if (error && typeof error === 'object' && 'status' in error && error.status === 401) {
+        return router.replace('/sign-in')
+      }
       setMessage(error instanceof Error ? error.message : 'Unable to load your workspace')
     } finally {
       setLoading(false)
@@ -108,7 +110,7 @@ export default function AppShell({ section }: { section: string }) {
   }, [section])
 
   async function signOut() {
-    await supabase.auth.signOut()
+    await authClient.signOut()
     router.replace('/')
   }
 
@@ -1065,7 +1067,7 @@ function SettingsView({ email }: { email: string }) {
         <p className="mt-4 text-xs text-[#718077]">Verified email</p>
         <p className="mt-1 text-sm font-semibold">{email}</p>
         <p className="mt-5 text-xs leading-5 text-[#718077]">
-          Password recovery and email delivery depend on your Supabase Auth email configuration.
+          Password recovery and verification email delivery are not configured yet.
         </p>
       </Card>
       <Card>

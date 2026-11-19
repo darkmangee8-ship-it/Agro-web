@@ -1,25 +1,24 @@
-# Production checklist and known limitations
+# Production checklist
 
-## Required manual actions
+## Before deploying
 
-1. Apply the relational migration and replace the Make KV repository calls with table repositories before handling sensitive production financial documents.
-2. Configure Supabase Auth email verification, recovery email templates, site URL, and allowed redirects.
-3. Create a private evidence bucket with owner-scoped storage RLS and MIME/size checks before enabling uploads.
-4. Set `ALLOWED_ORIGINS` to exact frontend origins; do not leave permissive development behavior in production.
-5. Assign advisers and administrators through a trusted server process using `app_metadata`. Never accept role changes from the browser.
-6. Select and legally review Nigerian market data sources before import.
-7. Review privacy, retention, deletion, consent, incident-response, and vendor agreements against the Nigeria Data Protection Act and current regulator guidance.
-8. Configure monitoring for Edge Function errors, weather failures, auth anomalies, import rejections, and backup restores.
+1. Provision an external PostgreSQL database and use its pooled connection URL for `DATABASE_URL`.
+2. Set `BETTER_AUTH_SECRET` to a unique random value of at least 32 characters. Keep it server-only.
+3. Set `BETTER_AUTH_URL` and `NEXT_PUBLIC_SITE_URL` to the canonical deployment URL. Add the exact Vercel preview URLs if preview deployments need working authentication.
+4. Generate and apply Drizzle migrations with `pnpm db:generate` and `pnpm db:migrate` before the app handles user data.
+5. Run `pnpm test`, `pnpm build`, and verify signup, login, logout, and protected API behavior against the production database.
+6. Promote administrators only through a trusted PostgreSQL process by setting `user.role` to `admin`; never add a public role-change endpoint.
+7. Review privacy, retention, deletion, consent, incident response, and vendor agreements against applicable Nigerian privacy requirements.
 
-## Verification
+## Security and verification
 
-- Create two farmer accounts and prove each receives `401/403` for the other's resources.
-- Confirm public bundles contain only the anon key, never a service-role key.
-- Test malformed coordinates, negative amounts, duplicate market rows, stale observations, provider timeout, and expired sessions.
-- Verify Open-Meteo attribution and retrieval timestamps.
-- Verify predictive credit scoring remains disabled.
-- Run `pnpm build` and `figma make verify-deploy`, then visit every generated public route.
+- Create two farmer accounts and verify that each can read and write only their own profile, activities, and financial records.
+- Verify anonymous requests receive `401`, and non-admin market imports receive `403`.
+- Confirm database credentials and auth secrets are absent from browser bundles and public environment variables.
+- Test malformed profile fields, invalid coordinates, negative/invalid financial amounts, invalid market imports, weather-provider errors, and expired sessions.
+- Verify Open-Meteo attribution and retrieval timestamps, and confirm predictive credit scoring remains disabled.
+- Test migrations on a staging database and verify backups/restores before launch.
 
-## Deployment status
+## Supabase transition note
 
-The repository is prepared for the connected Make/Supabase environment. No external production URL or deployed FastAPI service is claimed. Live weather requires successful network access from the deployed Edge Function. Market data remains unavailable until a verified source is imported.
+The repository no longer contains Supabase application code. That does not delete Supabase-hosted records or accounts. No export or import of existing Supabase KV records is performed. Keep the old project available until any required data export, migration, and retention decisions are complete.

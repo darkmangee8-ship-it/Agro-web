@@ -4,7 +4,7 @@ import { AlertCircle, ArrowRight, Loader2 } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState, type FormEvent } from 'react'
-import { supabase } from '@/lib/supabase'
+import { authClient } from '@/lib/auth-client'
 
 export default function AuthForm({ mode }: { mode: 'sign-in' | 'create-account' }) {
   const router = useRouter()
@@ -23,24 +23,25 @@ export default function AuthForm({ mode }: { mode: 'sign-in' | 'create-account' 
       setBusy(false)
       return
     }
-    const result =
-      mode === 'sign-in'
-        ? await supabase.auth.signInWithPassword({ email, password })
-        : await supabase.auth.signUp({
+    try {
+      const result =
+        mode === 'sign-in'
+          ? await authClient.signIn.email({ email, password })
+          : await authClient.signUp.email({
             email,
             password,
-            options: { data: { full_name: String(form.get('name') ?? '') } },
+            name: String(form.get('name') ?? '').trim(),
           })
-    setBusy(false)
-    if (result.error) {
-      setMessage(result.error.message)
-      return
+      if (result.error) {
+        setMessage(result.error.message ?? 'Unable to authenticate')
+        return
+      }
+      router.push('/app/dashboard')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to authenticate')
+    } finally {
+      setBusy(false)
     }
-    if (mode === 'create-account' && !result.data.session) {
-      setMessage('Check your email to verify your account, then sign in.')
-      return
-    }
-    router.push('/app/dashboard')
   }
 
   const create = mode === 'create-account'
