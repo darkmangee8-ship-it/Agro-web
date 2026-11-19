@@ -22,6 +22,7 @@ const nextConfig: NextConfig = {
   enablePrerenderSourceMaps: false,
   experimental: {
     cpus: 2,
+    agentUpgrade: 'security',
   },
 }
 
