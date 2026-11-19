@@ -1,5 +1,6 @@
 import {
   boolean,
+  integer,
   jsonb,
   numeric,
   pgTable,
@@ -88,4 +89,40 @@ export const marketPrices = pgTable('market_prices', {
   source: text('source').notNull(),
   verificationStatus: text('verification_status').notNull(),
   retrievedAt: timestamp('retrieved_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export const sponsorProfiles = pgTable('sponsor_profiles', {
+  userId: text('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  organizationName: text('organization_name').notNull(),
+  organizationType: text('organization_type').notNull(),
+  approvalStatus: text('approval_status').notNull().default('pending'),
+  ...timestamps,
+})
+
+export const loanRequests = pgTable('loan_requests', {
+  id: text('id').primaryKey(),
+  farmerId: text('farmer_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  sponsorId: text('sponsor_id').references(() => users.id, { onDelete: 'set null' }),
+  requestedAmount: numeric('requested_amount', { precision: 16, scale: 2 }).notNull(),
+  requestedTermMonths: integer('requested_term_months').notNull(),
+  purpose: text('purpose').notNull(),
+  repaymentPlan: text('repayment_plan').notNull(),
+  sponsorConsentAt: timestamp('sponsor_consent_at', { withTimezone: true }).notNull(),
+  sponsorConsent: boolean('sponsor_consent').notNull().default(true),
+  status: text('status').notNull().default('submitted'),
+  offeredAmount: numeric('offered_amount', { precision: 16, scale: 2 }),
+  annualInterestRate: numeric('annual_interest_rate', { precision: 7, scale: 4 }),
+  offeredTermMonths: integer('offered_term_months'),
+  estimatedTotalRepayment: numeric('estimated_total_repayment', { precision: 16, scale: 2 }),
+  sponsorMessage: text('sponsor_message'),
+  ...timestamps,
+})
+
+export const loanAuditEvents = pgTable('loan_audit_events', {
+  id: text('id').primaryKey(),
+  loanRequestId: text('loan_request_id').references(() => loanRequests.id, { onDelete: 'set null' }),
+  actorId: text('actor_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  eventType: text('event_type').notNull(),
+  metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })

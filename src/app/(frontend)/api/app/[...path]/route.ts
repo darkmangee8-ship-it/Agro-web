@@ -1,8 +1,8 @@
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, inArray, or } from 'drizzle-orm'
 import { getAuth } from '@/lib/auth'
 import { getDatabase } from '@/lib/db'
-import { farmActivities, farmProfiles, financialRecords, marketPrices } from '@/lib/db/schema'
-import { readiness, recommendations } from '@/lib/domain'
+import { farmActivities, farmProfiles, financialRecords, loanAuditEvents, loanRequests, marketPrices, sponsorProfiles, users } from '@/lib/db/schema'
+import { estimateEqualMonthlyRepayment, loanApplicationReadiness, readiness, recommendations } from '@/lib/domain'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -17,11 +17,12 @@ function json(data: unknown, status = 200) {
 async function getSession(request: Request) {
   const session = await getAuth().api.getSession({ headers: request.headers })
   if (!session) return null
+  const [user] = await getDatabase().select({ role: users.role }).from(users).where(eq(users.id, session.user.id)).limit(1)
   return {
     user: {
       id: session.user.id,
       email: session.user.email,
-      role: (session.user as typeof session.user & { role?: string }).role,
+      role: user?.role,
     },
   } satisfies Session
 }
@@ -72,10 +73,200 @@ async function route(request: Request, context: RouteContext) {
       savedMarkets: [],
       recommendations: recommendations(profile ?? {}),
       assessment: readiness(financial as Parameters<typeof readiness>[0], Boolean(profile?.financialConsent)),
+      loanReadiness: loanApplicationReadiness(profile as Record<string, any> | null, financial as Parameters<typeof readiness>[0], activities),
     })
   }
 
+  if (endpoint === 'sponsor-profile' && method === 'POST') {
+    const body = await bodyOf(request)
+    const organizationName = typeof body?.organizationName === 'string' ? body.organizationName.trim() : ''
+    const organizationType = typeof body?.organizationType === 'string' ? body.organizationType : ''
+    if (session.user.role !== 'farmer' || organizationName.length < 2 || organizationName.length > 160 || !['bank', 'microfinance', 'cooperative', 'other'].includes(organizationType)) {
+      return json({ error: 'Provide a valid organization name and type. Organization access requires administrator review.' }, 400)
+    }
+    const item = { userId, organizationName, organizationType, approvalStatus: 'pending' }
+    await db.insert(sponsorProfiles).values(item).onConflictDoUpdate({
+      target: sponsorProfiles.userId,
+      set: { organizationName, organizationType, approvalStatus: 'pending', updatedAt: new Date() },
+    })
+    await db.insert(loanAuditEvents).values({ id: crypto.randomUUID(), actorId: userId, eventType: 'sponsor_application_submitted', metadata: { organizationType } })
+    return json({ status: 'pending' }, 201)
+  }
+
+  if (endpoint === 'sponsor/status' && method === 'GET') {
+    const [organization] = await db.select({ organizationName: sponsorProfiles.organizationName, organizationType: sponsorProfiles.organizationType, approvalStatus: sponsorProfiles.approvalStatus })
+      .from(sponsorProfiles).where(eq(sponsorProfiles.userId, userId)).limit(1)
+    return json({ role: session.user.role ?? 'farmer', organization: organization ?? null })
+  }
+
+  if (endpoint === 'loans' && method === 'GET') {
+    const rows = await db.select().from(loanRequests).where(eq(loanRequests.farmerId, userId)).orderBy(desc(loanRequests.createdAt))
+    return json({ items: rows })
+  }
+
+  if (endpoint === 'loans' && method === 'POST') {
+    if (session.user.role !== 'farmer') return json({ error: 'Farmer account required' }, 403)
+    const body = await bodyOf(request)
+    const [profileRow, recordRows, activityRows] = await Promise.all([
+      ownedProfile(session),
+      db.select({ record: financialRecords.record }).from(financialRecords).where(eq(financialRecords.ownerId, userId)),
+      db.select({ activity: farmActivities.activity }).from(farmActivities).where(eq(farmActivities.ownerId, userId)),
+    ])
+    const eligibility = loanApplicationReadiness(profileRow?.profile as Record<string, any> | null, recordRows.map((row) => row.record) as Parameters<typeof readiness>[0], activityRows.map((row) => row.activity))
+    if (!eligibility.ready) return json({ error: 'Complete the application record requirements before applying.', eligibility }, 400)
+    const amount = Number(body?.requestedAmount)
+    const term = Number(body?.requestedTermMonths)
+    const purpose = typeof body?.purpose === 'string' ? body.purpose.trim() : ''
+    const repaymentPlan = typeof body?.repaymentPlan === 'string' ? body.repaymentPlan.trim() : ''
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 99999999999999 || !Number.isInteger(term) || term < 1 || term > 60 || purpose.length < 10 || purpose.length > 1000 || repaymentPlan.length < 10 || repaymentPlan.length > 1000 || body?.shareWithSponsors !== true) {
+      return json({ error: 'Enter a valid amount, 1–60 month term, loan purpose and repayment plan, and explicitly consent to sharing this application with approved sponsors.' }, 400)
+    }
+    const id = crypto.randomUUID()
+    await db.insert(loanRequests).values({
+      id, farmerId: userId, requestedAmount: String(amount), requestedTermMonths: term,
+      purpose, repaymentPlan, sponsorConsentAt: new Date(), status: 'submitted',
+    })
+    await db.insert(loanAuditEvents).values({ id: crypto.randomUUID(), loanRequestId: id, actorId: userId, eventType: 'loan_application_submitted', metadata: { requestedAmount: amount, requestedTermMonths: term } })
+    return json({ id, status: 'submitted' }, 201)
+  }
+
+  const respondMatch = endpoint.match(/^loans\/([^/]+)\/respond$/)
+  if (respondMatch && method === 'PATCH') {
+    const body = await bodyOf(request)
+    if (!['accepted', 'declined'].includes(body?.response)) return json({ error: 'Choose accept or decline for this offer' }, 400)
+    const [requestRow] = await db.select().from(loanRequests).where(and(eq(loanRequests.id, respondMatch[1]), eq(loanRequests.farmerId, userId), eq(loanRequests.status, 'offer_made'))).limit(1)
+    if (!requestRow) return json({ error: 'Loan offer not found' }, 404)
+    await db.update(loanRequests).set({ status: body.response, updatedAt: new Date() }).where(eq(loanRequests.id, requestRow.id))
+    await db.insert(loanAuditEvents).values({ id: crypto.randomUUID(), loanRequestId: requestRow.id, actorId: userId, eventType: `offer_${body.response}`, metadata: {} })
+    return json({ status: body.response })
+  }
+
+  if (endpoint === 'sponsor/opportunities' && method === 'GET') {
+    if (session.user.role !== 'sponsor') return json({ error: 'Approved sponsor access is required' }, 403)
+    const [organization] = await db.select().from(sponsorProfiles).where(and(eq(sponsorProfiles.userId, userId), eq(sponsorProfiles.approvalStatus, 'approved'))).limit(1)
+    if (!organization) return json({ error: 'Sponsor organization approval is required' }, 403)
+    const rows = await db.select({
+      request: loanRequests,
+      farmerName: users.name,
+      profile: farmProfiles.profile,
+    }).from(loanRequests)
+      .innerJoin(users, eq(users.id, loanRequests.farmerId))
+      .leftJoin(farmProfiles, eq(farmProfiles.userId, loanRequests.farmerId))
+      .where(and(eq(loanRequests.sponsorConsent, true), or(inArray(loanRequests.status, ['submitted', 'reviewed']), and(eq(loanRequests.sponsorId, userId), inArray(loanRequests.status, ['offer_made', 'accepted', 'declined'])))))
+      .orderBy(desc(loanRequests.createdAt))
+    const items = await Promise.all(rows.map(async ({ request: item, farmerName, profile }) => {
+      const records = await db.select({ record: financialRecords.record }).from(financialRecords).where(eq(financialRecords.ownerId, item.farmerId))
+      const assessment = readiness(records.map((row) => row.record) as Parameters<typeof readiness>[0], true)
+      const farm = profile ?? {}
+      await db.insert(loanAuditEvents).values({ id: crypto.randomUUID(), loanRequestId: item.id, actorId: userId, eventType: 'sponsor_viewed_application', metadata: {} })
+      return {
+        id: item.id, status: item.status, requestedAmount: item.requestedAmount,
+        requestedTermMonths: item.requestedTermMonths, purpose: item.purpose,
+        repaymentPlan: item.repaymentPlan, createdAt: item.createdAt,
+        offeredAmount: item.offeredAmount, annualInterestRate: item.annualInterestRate,
+        offeredTermMonths: item.offeredTermMonths, estimatedTotalRepayment: item.estimatedTotalRepayment,
+        estimatedInterest: item.estimatedTotalRepayment && item.offeredAmount ? (Number(item.estimatedTotalRepayment) - Number(item.offeredAmount)).toFixed(2) : null,
+        sponsorMessage: item.sponsorMessage,
+        farmer: { name: farmerName, farmName: farm.farmName, state: farm.state, lga: farm.lga, farmSize: farm.farmSize, farmSizeUnit: farm.farmSizeUnit, crops: Array.isArray(farm.crops) ? farm.crops : [] },
+        records: { revenue: assessment.indicators.totalRecordedRevenue, expenses: assessment.indicators.totalRecordedExpenses, operatingSurplus: assessment.indicators.operatingSurplus, count: records.length },
+      }
+    }))
+    return json({ organization: organization.organizationName, items })
+  }
+
+  const sponsorOfferMatch = endpoint.match(/^sponsor\/opportunities\/([^/]+)\/offer$/)
+  if (sponsorOfferMatch && method === 'POST') {
+    if (session.user.role !== 'sponsor') return json({ error: 'Approved sponsor access is required' }, 403)
+    const [organization] = await db.select().from(sponsorProfiles).where(and(eq(sponsorProfiles.userId, userId), eq(sponsorProfiles.approvalStatus, 'approved'))).limit(1)
+    if (!organization) return json({ error: 'Sponsor organization approval is required' }, 403)
+    const body = await bodyOf(request)
+    const [loan] = await db.select().from(loanRequests).where(and(eq(loanRequests.id, sponsorOfferMatch[1]), eq(loanRequests.sponsorConsent, true), inArray(loanRequests.status, ['submitted', 'reviewed']))).limit(1)
+    const amount = Number(body?.offeredAmount)
+    const rate = Number(body?.annualInterestRate)
+    const term = Number(body?.offeredTermMonths)
+    const message = typeof body?.sponsorMessage === 'string' ? body.sponsorMessage.trim().slice(0, 1000) : ''
+    if (!loan) return json({ error: 'This application is no longer available' }, 404)
+    if (!Number.isFinite(amount) || amount <= 0 || amount > Number(loan.requestedAmount) || !Number.isFinite(rate) || rate < 0 || rate > 100 || !Number.isInteger(term) || term < 1 || term > 60) {
+      return json({ error: 'Offer must include a positive amount no greater than requested, an annual rate from 0–100%, and a 1–60 month term' }, 400)
+    }
+    const total = estimateEqualMonthlyRepayment(amount, rate, term)
+    const [updatedLoan] = await db.update(loanRequests).set({
+      sponsorId: userId, status: 'offer_made', offeredAmount: String(amount),
+      annualInterestRate: String(rate), offeredTermMonths: term,
+      estimatedTotalRepayment: total === null ? null : String(total), sponsorMessage: message, updatedAt: new Date(),
+    }).where(and(eq(loanRequests.id, loan.id), eq(loanRequests.sponsorConsent, true), inArray(loanRequests.status, ['submitted', 'reviewed']))).returning({ id: loanRequests.id })
+    if (!updatedLoan) return json({ error: 'This application was withdrawn or has already received an offer' }, 409)
+    await db.insert(loanAuditEvents).values({ id: crypto.randomUUID(), loanRequestId: loan.id, actorId: userId, eventType: 'sponsor_offer_made', metadata: { offeredAmount: amount, annualInterestRate: rate, offeredTermMonths: term } })
+    return json({ status: 'offer_made', estimatedTotalRepayment: total })
+  }
+
+  if (endpoint === 'admin/lending' && method === 'GET') {
+    if (session.user.role !== 'admin') return json({ error: 'Administrator role required' }, 403)
+    const [farmers, organizations, applications] = await Promise.all([
+      db.select({ id: users.id, name: users.name, email: users.email, createdAt: users.createdAt, profile: farmProfiles.profile }).from(users).leftJoin(farmProfiles, eq(farmProfiles.userId, users.id)).where(eq(users.role, 'farmer')).orderBy(desc(users.createdAt)),
+      db.select({ profile: sponsorProfiles, userName: users.name, email: users.email }).from(sponsorProfiles).innerJoin(users, eq(users.id, sponsorProfiles.userId)).orderBy(desc(sponsorProfiles.createdAt)),
+      db.select({ request: loanRequests, userName: users.name, email: users.email }).from(loanRequests).innerJoin(users, eq(users.id, loanRequests.farmerId)).orderBy(desc(loanRequests.createdAt)),
+    ])
+    const farmerIds = farmers.map((farmer) => farmer.id)
+    const [farmerRecords, farmerActivities] = farmerIds.length ? await Promise.all([
+      db.select({ ownerId: financialRecords.ownerId, record: financialRecords.record }).from(financialRecords).where(inArray(financialRecords.ownerId, farmerIds)),
+      db.select({ ownerId: farmActivities.ownerId }).from(farmActivities).where(inArray(farmActivities.ownerId, farmerIds)),
+    ]) : [[], []]
+    const farmerSummaries = farmers.map(({ profile, ...farmer }) => {
+      const records = farmerRecords.filter((row) => row.ownerId === farmer.id).map((row) => row.record)
+      const assessment = readiness(records as Parameters<typeof readiness>[0], false)
+      const farm = profile ?? {}
+      return {
+        ...farmer,
+        farm: { farmName: farm.farmName, state: farm.state, lga: farm.lga, farmSize: farm.farmSize, farmSizeUnit: farm.farmSizeUnit, crops: Array.isArray(farm.crops) ? farm.crops : [] },
+        recordSummary: { financialRecordCount: records.length, activityCount: farmerActivities.filter((row) => row.ownerId === farmer.id).length, revenue: assessment.indicators.totalRecordedRevenue, expenses: assessment.indicators.totalRecordedExpenses, operatingSurplus: assessment.indicators.operatingSurplus },
+      }
+    })
+    await db.insert(loanAuditEvents).values({ id: crypto.randomUUID(), actorId: userId, eventType: 'admin_viewed_lending_dashboard', metadata: { farmerCount: farmers.length, applicationCount: applications.length } })
+    return json({ farmers: farmerSummaries, organizations: organizations.map(({ profile, ...rest }) => ({ ...rest, ...profile })), applications: applications.map(({ request: item, ...farmer }) => ({ ...item, farmer })) })
+  }
+
+  const adminLoanMatch = endpoint.match(/^admin\/loans\/([^/]+)$/)
+  if (adminLoanMatch && method === 'PATCH') {
+    if (session.user.role !== 'admin') return json({ error: 'Administrator role required' }, 403)
+    const body = await bodyOf(request)
+    const decision = body?.decision
+    const reason = typeof body?.reason === 'string' ? body.reason.trim().slice(0, 1000) : ''
+    if (!['reviewed', 'declined'].includes(decision) || reason.length < 5) return json({ error: 'Choose reviewed or declined and provide a review note of at least five characters' }, 400)
+    const [item] = await db.select().from(loanRequests).where(eq(loanRequests.id, adminLoanMatch[1])).limit(1)
+    if (!item || !['submitted', 'reviewed'].includes(item.status)) return json({ error: 'Application is not available for administrator review' }, 404)
+    await db.update(loanRequests).set({ status: decision, updatedAt: new Date() }).where(eq(loanRequests.id, item.id))
+    await db.insert(loanAuditEvents).values({ id: crypto.randomUUID(), loanRequestId: item.id, actorId: userId, eventType: `admin_${decision}`, metadata: { reason } })
+    return json({ status: decision })
+  }
+
+  const withdrawMatch = endpoint.match(/^loans\/([^/]+)\/withdraw$/)
+  if (withdrawMatch && method === 'PATCH') {
+    const [item] = await db.select().from(loanRequests).where(and(eq(loanRequests.id, withdrawMatch[1]), eq(loanRequests.farmerId, userId))).limit(1)
+    if (!item || item.status === 'withdrawn') return json({ error: 'This application can no longer be withdrawn' }, 404)
+    await db.update(loanRequests).set({ status: ['submitted', 'reviewed', 'offer_made'].includes(item.status) ? 'withdrawn' : item.status, sponsorConsent: false, updatedAt: new Date() }).where(eq(loanRequests.id, item.id))
+    await db.insert(loanAuditEvents).values({ id: crypto.randomUUID(), loanRequestId: item.id, actorId: userId, eventType: 'farmer_withdrew_application', metadata: {} })
+    return json({ status: 'withdrawn' })
+  }
+
+  const sponsorReviewMatch = endpoint.match(/^admin\/sponsors\/([^/]+)$/)
+  if (sponsorReviewMatch && method === 'PATCH') {
+    if (session.user.role !== 'admin') return json({ error: 'Administrator role required' }, 403)
+    const body = await bodyOf(request)
+    if (!['approved', 'rejected'].includes(body?.decision)) return json({ error: 'Choose approved or rejected' }, 400)
+    const [organization] = await db.select().from(sponsorProfiles).where(eq(sponsorProfiles.userId, sponsorReviewMatch[1])).limit(1)
+    if (!organization || organization.approvalStatus !== 'pending') return json({ error: 'Pending sponsor application not found' }, 404)
+    const role = body.decision === 'approved' ? 'sponsor' : 'farmer'
+    await db.transaction(async (tx) => {
+      await tx.update(sponsorProfiles).set({ approvalStatus: body.decision, updatedAt: new Date() }).where(eq(sponsorProfiles.userId, organization.userId))
+      await tx.update(users).set({ role, updatedAt: new Date() }).where(eq(users.id, organization.userId))
+      await tx.insert(loanAuditEvents).values({ id: crypto.randomUUID(), actorId: userId, eventType: `sponsor_${body.decision}`, metadata: { sponsorUserId: organization.userId } })
+    })
+    return json({ status: body.decision, role })
+  }
+
   if (endpoint === 'profile' && method === 'PUT') {
+    if (session.user.role !== 'farmer') return json({ error: 'Farmer account required' }, 403)
     const body = await bodyOf(request)
     if (!body || typeof body !== 'object' || Array.isArray(body)) return json({ error: 'Profile must be an object' }, 400)
     const allowed = [
@@ -105,6 +296,7 @@ async function route(request: Request, context: RouteContext) {
   }
 
   if (endpoint === 'activities' && method === 'POST') {
+    if (session.user.role !== 'farmer') return json({ error: 'Farmer account required' }, 403)
     const body = await bodyOf(request)
     if (!body?.type || !body?.date) return json({ error: 'Activity type and date are required' }, 400)
     const item = {
@@ -122,6 +314,7 @@ async function route(request: Request, context: RouteContext) {
   }
 
   if (endpoint === 'financial' && method === 'POST') {
+    if (session.user.role !== 'farmer') return json({ error: 'Farmer account required' }, 403)
     const body = await bodyOf(request)
     const amount = Number(body?.amount)
     if (!['sale', 'expense'].includes(body?.type) || !Number.isFinite(amount) || amount <= 0) {

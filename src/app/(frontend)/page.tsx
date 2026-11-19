@@ -1,7 +1,12 @@
 import { ArrowRight, BarChart3, CloudSun, Landmark, Leaf, MapPin, ShieldCheck } from 'lucide-react'
 import Link from 'next/link'
+import { headers } from 'next/headers'
+import { redirect } from 'next/navigation'
+import { getAuth } from '@/lib/auth'
 import SiteFooter from '@/components/site-footer'
 import SiteHeader from '@/components/site-header'
+
+export const dynamic = 'force-dynamic'
 
 const modules = [
   {
@@ -30,7 +35,18 @@ const modules = [
   },
 ]
 
-export default function HomePage() {
+export default async function HomePage() {
+  let destination: string | null = null
+  try {
+    const session = await getAuth().api.getSession({ headers: await headers() })
+    if (session) {
+      const role = (session.user as typeof session.user & { role?: string }).role
+      destination = role === 'sponsor' ? '/app/sponsor' : '/app/dashboard'
+    }
+  } catch {
+    // Keep the public landing page available when the auth database is unavailable.
+  }
+  if (destination) redirect(destination)
   return (
     <main>
       <SiteHeader />
@@ -62,6 +78,9 @@ export default function HomePage() {
                 See how it works
               </Link>
             </div>
+            <Link href="/sponsor/sign-in" className="mt-4 inline-flex text-sm font-semibold text-[#286247] underline decoration-[#286247]/30 underline-offset-4">
+              Bank or sponsor? Open the sponsor portal
+            </Link>
             <div className="mt-10 flex items-center gap-3 text-sm text-[#52695e]">
               <ShieldCheck className="text-[#2f7655]" size={20} /> Your records stay private and
               access-controlled.

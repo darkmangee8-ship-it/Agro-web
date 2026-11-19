@@ -4,6 +4,8 @@
 
 AgroVision AI is a Nigeria-focused agricultural decision-support platform. It connects farm records, transparent agronomic recommendations, Open-Meteo forecasts, verified market observations, and explainable financial-readiness calculations.
 
+It also includes a records-completeness checklist for farmer loan applications, a consent-gated sponsor workspace, and administrator review of sponsor organizations and applications. The checklist is not a credit score or approval; sponsors are manually verified and lending decisions remain with a human lender. The application does not collect NIN, BVN, or bank-account numbers.
+
 ## Stack
 
 - Next.js 16 App Router and React 19
@@ -48,4 +50,4 @@ Removing the Supabase client, Edge Function, KV implementation, migration, and p
 - Recommendation labels reference general FAO soil, water, and pest-management principles; rules are not locally validated predictive models.
 - Markets: no live Nigerian price provider is assumed. Administrators can import observations after reviewing source terms.
 
-See [docs/PRODUCTION.md](docs/PRODUCTION.md) for deployment checks and known limitations.
+See [docs/ADMIN_SETUP.md](docs/ADMIN_SETUP.md) for step-by-step admin, sponsor, and farmer workflow setup, and [docs/PRODUCTION.md](docs/PRODUCTION.md) for deployment checks and known limitations.

@@ -30,6 +30,9 @@ export default function SiteHeader() {
           ))}
         </nav>
         <div className="hidden items-center gap-3 md:flex">
+          <Link href="/sponsor/sign-in" className="px-3 py-2 text-sm font-semibold text-[#365647]">
+            Sponsor portal
+          </Link>
           <Link href="/sign-in" className="px-4 py-2 text-sm font-semibold text-[#173d2e]">
             Sign in
           </Link>
@@ -74,6 +77,9 @@ export default function SiteHeader() {
               Join now
             </Link>
           </div>
+          <Link href="/sponsor/sign-in" className="mt-3 block py-2 text-center text-sm font-semibold text-[#286247]" onClick={() => setOpen(false)}>
+            Sponsor portal sign in
+          </Link>
         </nav>
       )}
     </header>

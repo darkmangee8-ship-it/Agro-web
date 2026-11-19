@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readiness, recommendations } from '../src/lib/domain'
+import { estimateEqualMonthlyRepayment, loanApplicationReadiness, readiness, recommendations } from '../src/lib/domain'
 
 describe('financial readiness', () => {
   it('does not invent missing financial values', () => {
@@ -38,5 +38,40 @@ describe('agronomic recommendations', () => {
   it('does not emit missing-data rules when context is supplied', () => {
     const result = recommendations({ soilType: 'Loam', irrigation: 'available', crops: [] })
     expect(result).toHaveLength(0)
+  })
+})
+
+describe('loan application readiness', () => {
+  it('requires complete farm, transaction, and activity records without deciding credit eligibility', () => {
+    const records = [
+      { type: 'sale', amount: 100 },
+      { type: 'sale', amount: 80 },
+      { type: 'expense', amount: 25 },
+      { type: 'expense', amount: 10 },
+    ]
+    const result = loanApplicationReadiness(
+      { state: 'Kaduna', lga: 'Zaria', farmSize: 2, crops: ['Maize'] },
+      records,
+      [{}, {}, {}],
+    )
+    expect(result.ready).toBe(true)
+    expect(result.note).toContain('not a credit score')
+  })
+
+  it('identifies missing application records', () => {
+    const result = loanApplicationReadiness(null, [], [])
+    expect(result.ready).toBe(false)
+    expect(result.checks.filter((check) => !check.complete)).toHaveLength(7)
+  })
+})
+
+describe('illustrative loan repayment estimate', () => {
+  it('handles zero interest and rejects invalid values', () => {
+    expect(estimateEqualMonthlyRepayment(120_000, 0, 12)).toBe(120_000)
+    expect(estimateEqualMonthlyRepayment(0, 10, 12)).toBeNull()
+  })
+
+  it('calculates an amortized estimate with interest', () => {
+    expect(estimateEqualMonthlyRepayment(120_000, 12, 12)).toBe(127_942.26)
   })
 })

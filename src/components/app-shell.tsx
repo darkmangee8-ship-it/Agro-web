@@ -11,6 +11,7 @@ import {
   FileText,
   HelpCircle,
   Landmark,
+  HandCoins,
   Leaf,
   Loader2,
   LogOut,
@@ -47,6 +48,7 @@ const sections = [
   ['markets', 'Market Intelligence', Landmark],
   ['financial', 'Financial Identity', Wallet],
   ['credit', 'Credit Assessment', FileText],
+  ['sponsor', 'Sponsor Workspace', HandCoins],
   ['notifications', 'Notifications', Bell],
   ['settings', 'Account Settings', Settings],
   ['help', 'Help & Support', HelpCircle],
@@ -60,6 +62,7 @@ type Bootstrap = {
   notifications: Array<Record<string, any>>
   recommendations: Array<Record<string, any>>
   assessment: Record<string, any>
+  loanReadiness: { ready: boolean; checks: Array<{ id: string; label: string; complete: boolean }>; note: string }
 }
 
 const money = new Intl.NumberFormat('en-NG', {
@@ -140,7 +143,8 @@ export default function AppShell({ section }: { section: string }) {
       </div>
     )
 
-  const title = sections.find(([key]) => key === section)?.[1] ?? 'Dashboard'
+  const visibleSections = sections.filter(([key]) => key !== 'sponsor' || data.user.role === 'sponsor' || data.user.role === 'farmer')
+  const title = section === 'sponsor' && data.user.role !== 'sponsor' ? 'Sponsor Registration' : visibleSections.find(([key]) => key === section)?.[1] ?? 'Dashboard'
   return (
     <div className="min-h-screen bg-[#f3f5ef] text-[#183a2e]">
       <aside
@@ -153,7 +157,7 @@ export default function AppShell({ section }: { section: string }) {
           </button>
         </div>
         <nav className="mt-9 space-y-1" aria-label="Application">
-          {sections.map(([key, label, Icon]) => (
+          {visibleSections.map(([key, label, Icon]) => (
             <Link
               key={key}
               href={`/app/${key}`}
@@ -235,7 +239,8 @@ export default function AppShell({ section }: { section: string }) {
           {section === 'financial' && (
             <Financial data={data} onSaved={load} setMessage={setMessage} />
           )}
-          {section === 'credit' && <Credit assessment={data.assessment} />}
+          {section === 'credit' && <Credit assessment={data.assessment} eligibility={data.loanReadiness} />}
+          {section === 'sponsor' && <Sponsor role={data.user.role} setMessage={setMessage} />}
           {section === 'notifications' && <Notifications items={data.notifications} />}
           {section === 'settings' && <SettingsView email={data.user.email} />}
           {section === 'help' && <Help />}
@@ -975,66 +980,193 @@ function Financial({
   )
 }
 
-function Credit({ assessment }: { assessment: any }) {
+function Credit({ assessment, eligibility }: { assessment: any; eligibility: Bootstrap['loanReadiness'] }) {
   const i = assessment.indicators
+  const [applications, setApplications] = useState<any[]>([])
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  useEffect(() => {
+    apiRequest<{ items: any[] }>('/loans').then((result) => setApplications(result.items)).catch(() => { })
+  }, [])
+  async function apply(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setBusy(true)
+    setMessage('')
+    try {
+      const body = Object.fromEntries(new FormData(event.currentTarget))
+      await apiRequest('/loans', { method: 'POST', body: JSON.stringify({ ...body, shareWithSponsors: body.shareWithSponsors === 'on' }) })
+        ; (event.currentTarget as HTMLFormElement).reset()
+      setMessage('Your application was submitted to approved sponsors.')
+      const result = await apiRequest<{ items: any[] }>('/loans')
+      setApplications(result.items)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to submit application')
+    } finally {
+      setBusy(false)
+    }
+  }
+  async function respond(id: string, response: 'accepted' | 'declined') {
+    try {
+      await apiRequest(`/loans/${id}/respond`, { method: 'PATCH', body: JSON.stringify({ response }) })
+      setApplications((items) => items.map((item) => item.id === id ? { ...item, status: response } : item))
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to respond to offer')
+    }
+  }
+  async function withdraw(id: string) {
+    try {
+      await apiRequest(`/loans/${id}/withdraw`, { method: 'PATCH', body: JSON.stringify({}) })
+      setApplications((items) => items.map((item) => item.id === id ? { ...item, status: 'withdrawn' } : item))
+      setMessage('Application withdrawn; sponsor access to it has been revoked.')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to withdraw application')
+    }
+  }
   return (
-    <div className="grid gap-5 lg:grid-cols-[1.1fr_.9fr]">
-      <Card>
-        <div className="flex items-start justify-between gap-5">
-          <div>
-            <p className="eyebrow">Financial readiness</p>
-            <h2 className="mt-2 text-2xl font-semibold">
-              {i.recordCompleteness}% record completeness
-            </h2>
+    <div>
+      <div className="grid gap-5 lg:grid-cols-[1.1fr_.9fr]">
+        <Card>
+          <div className="flex items-start justify-between gap-5">
+            <div>
+              <p className="eyebrow">Financial readiness</p>
+              <h2 className="mt-2 text-2xl font-semibold">
+                {i.recordCompleteness}% record completeness
+              </h2>
+            </div>
+            <span className="rounded-full bg-[#fff0d5] px-3 py-1 text-xs font-semibold text-[#8a611d]">
+              Not a credit score
+            </span>
           </div>
-          <span className="rounded-full bg-[#fff0d5] px-3 py-1 text-xs font-semibold text-[#8a611d]">
-            Not a credit score
-          </span>
-        </div>
-        <div className="mt-6 h-3 overflow-hidden rounded-full bg-[#e7ece7]">
-          <div
-            className="h-full rounded-full bg-[#357d59]"
-            style={{ width: `${i.recordCompleteness}%` }}
-          />
-        </div>
-        <div className="mt-7 grid gap-3 sm:grid-cols-2">
-          <div className="rounded-xl bg-[#f4f6f1] p-4">
-            <p className="text-xs text-[#718077]">Operating surplus</p>
-            <p className="mt-2 text-xl font-semibold">{money.format(i.operatingSurplus)}</p>
+          <div className="mt-6 h-3 overflow-hidden rounded-full bg-[#e7ece7]">
+            <div
+              className="h-full rounded-full bg-[#357d59]"
+              style={{ width: `${i.recordCompleteness}%` }}
+            />
           </div>
-          <div className="rounded-xl bg-[#f4f6f1] p-4">
-            <p className="text-xs text-[#718077]">Document-supported records</p>
-            <p className="mt-2 text-xl font-semibold">{i.supportedRecords}</p>
+          <div className="mt-7 grid gap-3 sm:grid-cols-2">
+            <div className="rounded-xl bg-[#f4f6f1] p-4">
+              <p className="text-xs text-[#718077]">Operating surplus</p>
+              <p className="mt-2 text-xl font-semibold">{money.format(i.operatingSurplus)}</p>
+            </div>
+            <div className="rounded-xl bg-[#f4f6f1] p-4">
+              <p className="text-xs text-[#718077]">Document-supported records</p>
+              <p className="mt-2 text-xl font-semibold">{i.supportedRecords}</p>
+            </div>
           </div>
-        </div>
-        <h3 className="mt-7 font-semibold">Main factors</h3>
-        <ul className="mt-3 space-y-2">
-          {assessment.factors.map((factor: string) => (
-            <li key={factor} className="flex gap-2 text-sm text-[#5d7065]">
-              <CheckCircle2 size={17} className="shrink-0 text-[#397a58]" />
-              {factor}
-            </li>
-          ))}
-        </ul>
-      </Card>
-      <Card>
-        <h2 className="font-semibold">Model validation status</h2>
-        <div className="mt-4 rounded-xl border border-[#ddb663]/25 bg-[#fff7e8] p-4">
-          <p className="text-sm font-semibold text-[#7b5718]">Predictive model disabled</p>
-          <p className="mt-2 text-xs leading-5 text-[#806a45]">
-            {assessment.validationStatus}. No synthetic repayment labels are used.
+          <h3 className="mt-7 font-semibold">Main factors</h3>
+          <ul className="mt-3 space-y-2">
+            {assessment.factors.map((factor: string) => (
+              <li key={factor} className="flex gap-2 text-sm text-[#5d7065]">
+                <CheckCircle2 size={17} className="shrink-0 text-[#397a58]" />
+                {factor}
+              </li>
+            ))}
+          </ul>
+        </Card>
+        <Card>
+          <h2 className="font-semibold">Model validation status</h2>
+          <div className="mt-4 rounded-xl border border-[#ddb663]/25 bg-[#fff7e8] p-4">
+            <p className="text-sm font-semibold text-[#7b5718]">Predictive model disabled</p>
+            <p className="mt-2 text-xs leading-5 text-[#806a45]">
+              {assessment.validationStatus}. No synthetic repayment labels are used.
+            </p>
+          </div>
+          <h3 className="mt-6 text-sm font-semibold">Important limitations</h3>
+          <p className="mt-2 text-sm leading-6 text-[#65776d]">{assessment.limitations}</p>
+          <h3 className="mt-6 text-sm font-semibold">Improve record quality</h3>
+          <p className="mt-2 text-sm leading-6 text-[#65776d]">
+            Record sales and expenses consistently across seasons, correct errors promptly, and attach
+            lawful supporting evidence where useful. A human lender makes any financing decision.
           </p>
-        </div>
-        <h3 className="mt-6 text-sm font-semibold">Important limitations</h3>
-        <p className="mt-2 text-sm leading-6 text-[#65776d]">{assessment.limitations}</p>
-        <h3 className="mt-6 text-sm font-semibold">Improve record quality</h3>
-        <p className="mt-2 text-sm leading-6 text-[#65776d]">
-          Record sales and expenses consistently across seasons, correct errors promptly, and attach
-          lawful supporting evidence where useful. A human lender makes any financing decision.
-        </p>
+        </Card>
+      </div>
+      <Card className="mt-5">
+        <p className="eyebrow">Before you apply</p>
+        <h2 className="mt-2 text-xl font-semibold">Application record checklist</h2>
+        <p className="mt-2 text-sm leading-6 text-[#65776d]">Complete all listed records to submit an application. Passing the checklist is not a loan eligibility or approval decision.</p>
+        <ul className="mt-4 grid gap-2 sm:grid-cols-2">
+          {eligibility.checks.map((check) => <li key={check.id} className="flex items-center gap-2 text-sm"><CheckCircle2 size={16} className={check.complete ? 'text-[#397a58]' : 'text-[#a8b1aa]'} />{check.label}</li>)}
+        </ul>
+        {eligibility.ready ? (
+          <form onSubmit={apply} className="mt-6 grid gap-4 border-t border-[#173d2e]/8 pt-5 md:grid-cols-2">
+            <Field label="Amount requested (NGN)"><input className="field" name="requestedAmount" type="number" min="1" max="99999999999999" step="0.01" required /></Field>
+            <Field label="Repayment period"><select className="field" name="requestedTermMonths" defaultValue="6">{[3, 6, 9, 12, 18, 24, 36, 48, 60].map((months) => <option key={months} value={months}>{months} months</option>)}</select></Field>
+            <Field label="How will you use the loan?" wide><textarea className="field min-h-24" name="purpose" minLength={10} maxLength={1000} required placeholder="Describe the farm costs or investment this will support." /></Field>
+            <Field label="How do you plan to repay?" wide><textarea className="field min-h-24" name="repaymentPlan" minLength={10} maxLength={1000} required placeholder="Describe expected income and a realistic repayment plan." /></Field>
+            <label className="flex gap-3 text-xs leading-5 text-[#52655b] md:col-span-2"><input className="mt-1 accent-[#1c5c41]" type="checkbox" name="shareWithSponsors" required /><span>I explicitly consent to share this application, farm location at state/LGA level, crops, requested terms, and summary farm financial records with approved sponsor organizations for review. I can withdraw this consent by contacting support. National ID/NIN, BVN, and bank account numbers are not collected here.</span></label>
+            {message && <p role="status" className="text-sm text-[#286247] md:col-span-2">{message}</p>}
+            <button disabled={busy} className="rounded-xl bg-[#0d3b2b] px-5 py-3 font-semibold text-white disabled:opacity-60 md:col-span-2">{busy ? 'Submitting…' : 'Submit loan request'}</button>
+          </form>
+        ) : <p className="mt-5 rounded-xl bg-[#fff7e8] p-4 text-sm text-[#7b5718]">Add missing farm records before applying. Start in My Farm and Financial Identity.</p>}
+        <p className="mt-4 text-xs leading-5 text-[#718077]">{eligibility.note} Only share identity documents and bank details through a verified, regulated lender’s secure process after receiving a clear privacy notice.</p>
       </Card>
+      <div className="mt-5 space-y-3">
+        <h2 className="text-lg font-semibold">Your applications</h2>
+        {applications.length ? applications.map((application) => <Card key={application.id}>
+          <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-semibold">{money.format(application.requestedAmount)} · {application.requestedTermMonths} months</p><p className="mt-1 text-sm text-[#718077]">{application.purpose}</p></div><span className="rounded-full bg-[#edf2ea] px-3 py-1 text-xs font-semibold capitalize">{application.status.replaceAll('_', ' ')}</span></div>
+          {application.status === 'offer_made' && <div className="mt-4 rounded-xl bg-[#f4f6f1] p-4"><p className="font-semibold">Offer: {money.format(application.offeredAmount)} at {application.annualInterestRate}% annual interest for {application.offeredTermMonths} months</p><p className="mt-1 text-sm">Estimated interest: {money.format(Number(application.estimatedTotalRepayment) - Number(application.offeredAmount))} · Estimated total repayment: {money.format(application.estimatedTotalRepayment)}</p>{application.sponsorMessage && <p className="mt-2 text-sm text-[#718077]">{application.sponsorMessage}</p>}<div className="mt-4 flex gap-2"><button onClick={() => respond(application.id, 'accepted')} className="rounded-lg bg-[#0d3b2b] px-4 py-2 text-sm font-semibold text-white">Accept offer</button><button onClick={() => respond(application.id, 'declined')} className="rounded-lg border px-4 py-2 text-sm font-semibold">Decline</button></div><p className="mt-3 text-xs text-[#718077]">Review all terms carefully; acceptance records your choice but does not disburse funds or create a legally executed loan agreement.</p></div>}
+          {['submitted', 'offer_made', 'accepted', 'declined', 'reviewed'].includes(application.status) && <button onClick={() => withdraw(application.id)} className="mt-3 text-xs font-semibold text-red-700">Withdraw application and revoke sponsor access</button>}
+        </Card>) : <Card><Empty text="You have not submitted a loan application." /></Card>}
+      </div>
     </div>
   )
+}
+
+function Sponsor({ role, setMessage }: { role: string; setMessage: (message: string) => void }) {
+  const [items, setItems] = useState<any[]>([])
+  const [busy, setBusy] = useState(false)
+  const [organization, setOrganization] = useState('')
+  const [verification, setVerification] = useState<any>(null)
+  async function load() {
+    try {
+      const result = await apiRequest<{ items: any[] }>('/sponsor/opportunities')
+      setItems(result.items)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to load sponsor applications')
+    }
+  }
+  useEffect(() => {
+    if (role === 'sponsor') load()
+    else apiRequest<any>('/sponsor/status').then(setVerification).catch(() => { })
+  }, [role])
+  async function register(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setBusy(true)
+    try {
+      await apiRequest('/sponsor-profile', { method: 'POST', body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) })
+      setOrganization('Your sponsor organization application is pending administrator verification. Access to farmer loan applications is not enabled yet.')
+        ; (event.currentTarget as HTMLFormElement).reset()
+    } catch (error) {
+      setOrganization(error instanceof Error ? error.message : 'Unable to submit sponsor application')
+    } finally { setBusy(false) }
+  }
+  async function makeOffer(event: FormEvent<HTMLFormElement>, id: string) {
+    event.preventDefault()
+    setBusy(true)
+    try {
+      await apiRequest(`/sponsor/opportunities/${id}/offer`, { method: 'POST', body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) })
+      setMessage('Indicative offer sent to the farmer for review.')
+      await load()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to submit offer')
+    } finally { setBusy(false) }
+  }
+  if (role !== 'sponsor' && verification?.organization?.approvalStatus === 'pending') return <Card>
+    <p className="eyebrow">Verification in progress</p><h2 className="mt-2 text-xl font-semibold">Sponsor access is pending review</h2>
+    <p className="mt-2 text-sm leading-6 text-[#65776d]">{verification.organization.organizationName} has been registered. An administrator must review the organization before sponsor applications become visible.</p>
+  </Card>
+  if (role !== 'sponsor' && verification?.organization?.approvalStatus === 'approved') return <Card>
+    <p className="eyebrow">Organization verified</p><h2 className="mt-2 text-xl font-semibold">Refresh your sponsor session</h2>
+    <p className="mt-2 text-sm leading-6 text-[#65776d]">This organization is approved. Sign out and sign back in through the sponsor portal to refresh your account access.</p>
+    <Link href="/sponsor/sign-in" className="mt-5 inline-flex rounded-xl bg-[#0d3b2b] px-4 py-3 font-semibold text-white">Go to sponsor sign in</Link>
+  </Card>
+  if (role !== 'sponsor') return <Card>
+    <p className="eyebrow">Lender and sponsor access</p><h2 className="mt-2 text-xl font-semibold">Register your organization</h2>
+    <p className="mt-2 max-w-2xl text-sm leading-6 text-[#65776d]">Banks, microfinance institutions, and agricultural cooperatives can request access. An administrator must verify the organization before any farmer application is visible.</p>
+    {verification?.organization?.approvalStatus === 'rejected' && <p className="mt-4 rounded-xl bg-[#fff4e6] p-3 text-sm text-[#875a19]">Your previous organization request was not approved. Update the organization details and apply again.</p>}
+    <form onSubmit={register} className="mt-5 grid max-w-xl gap-4 sm:grid-cols-2"><Field label="Organization name"><input className="field" name="organizationName" minLength={2} maxLength={160} required defaultValue={verification?.organization?.organizationName ?? ''} /></Field><Field label="Organization type"><select className="field" name="organizationType" defaultValue={verification?.organization?.organizationType ?? 'bank'}><option value="bank">Bank</option><option value="microfinance">Microfinance institution</option><option value="cooperative">Cooperative</option><option value="other">Other regulated lender</option></select></Field><button disabled={busy} className="rounded-xl bg-[#0d3b2b] px-5 py-3 font-semibold text-white sm:col-span-2">{busy ? 'Submitting…' : 'Request sponsor verification'}</button></form>{organization && <p role="status" className="mt-4 text-sm text-[#286247]">{organization}</p>}
+  </Card>
+  return <div><p className="max-w-3xl text-sm leading-6 text-[#66776f]">Review loan requests shared by farmers who explicitly consented. Financial summaries are farmer-reported and not independently verified. Any displayed repayment is illustrative, not a binding offer or loan contract.</p><div className="mt-5 space-y-4">{items.length ? items.map((item) => <Card key={item.id}><div className="flex flex-wrap justify-between gap-4"><div><p className="text-lg font-semibold">{item.farmer.name} · {item.farmer.farmName || 'Farm not named'}</p><p className="mt-1 text-sm text-[#718077]">{item.farmer.lga}, {item.farmer.state} · {item.farmer.farmSize || '—'} {item.farmer.farmSizeUnit || ''} · {(item.farmer.crops || []).join(', ')}</p><p className="mt-3 text-sm">{item.purpose}</p><p className="mt-1 text-xs text-[#718077]">Repayment plan: {item.repaymentPlan}</p></div><div className="text-right"><p className="text-xl font-semibold">{money.format(item.requestedAmount)}</p><p className="text-xs text-[#718077]">requested · {item.requestedTermMonths} months</p><p className="mt-3 text-xs">Records: {item.records.count} · Surplus: {money.format(item.records.operatingSurplus)}</p></div></div>{item.status === 'submitted' ? <form onSubmit={(event) => makeOffer(event, item.id)} className="mt-5 grid gap-3 border-t border-[#173d2e]/8 pt-5 sm:grid-cols-2 lg:grid-cols-4"><Field label="Offer (NGN)"><input className="field" name="offeredAmount" type="number" min="1" max={item.requestedAmount} step="0.01" required /></Field><Field label="Annual interest (%)"><input className="field" name="annualInterestRate" type="number" min="0" max="100" step="0.01" required /></Field><Field label="Term (months)"><input className="field" name="offeredTermMonths" type="number" min="1" max="60" defaultValue={item.requestedTermMonths} required /></Field><Field label="Message"><input className="field" name="sponsorMessage" maxLength={1000} /></Field><button disabled={busy} className="rounded-xl bg-[#0d3b2b] px-5 py-3 font-semibold text-white sm:col-span-2 lg:col-span-4">Send indicative offer</button></form> : <p className="mt-4 text-sm font-semibold capitalize text-[#286247]">Application status: {item.status.replaceAll('_', ' ')}</p>}<p className="mt-3 text-[11px] leading-5 text-[#718077]">No NIN, BVN, bank-account number, exact coordinates, phone number, or private credentials are disclosed in this workspace. Complete identity verification through an authorized secure provider if required.</p></Card>) : <Card><Empty text="No farmer applications have been shared with sponsors yet." /></Card>}</div></div>
 }
 
 function Notifications({ items }: { items: any[] }) {
@@ -1110,6 +1242,11 @@ function Help() {
 
 function Admin({ role, setMessage }: { role: string; setMessage: (s: string) => void }) {
   const [json, setJson] = useState('')
+  const [lending, setLending] = useState<any>(null)
+  const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({})
+  useEffect(() => {
+    if (role === 'admin') apiRequest<any>('/admin/lending').then(setLending).catch((error) => setMessage(error.message))
+  }, [role])
   if (role !== 'admin')
     return (
       <Card>
@@ -1129,27 +1266,42 @@ function Admin({ role, setMessage }: { role: string; setMessage: (s: string) => 
     }
   }
   return (
-    <Card>
-      <h2 className="text-xl font-semibold">Verified market data import</h2>
-      <p className="mt-2 max-w-2xl text-sm leading-6 text-[#66776f]">
-        Paste a JSON array after reviewing the source terms. Required fields: commodity, market,
-        positive price, unit, observationDate and source.
-      </p>
-      <textarea
-        className="field mt-5 min-h-64 font-mono text-xs"
-        value={json}
-        onChange={(e) => setJson(e.target.value)}
-        placeholder={
-          '[{"commodity":"Maize","market":"...","price":0,"unit":"kg","observationDate":"YYYY-MM-DD","source":"..."}]'
-        }
-      />
-      <button
-        onClick={submit}
-        className="mt-4 rounded-xl bg-[#0d3b2b] px-5 py-3 font-semibold text-white"
-      >
-        Validate and import
-      </button>
-    </Card>
+    <div className="space-y-5">
+      <Card>
+        <h2 className="text-xl font-semibold">Verified market data import</h2>
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-[#66776f]">
+          Paste a JSON array after reviewing the source terms. Required fields: commodity, market,
+          positive price, unit, observationDate and source.
+        </p>
+        <textarea
+          className="field mt-5 min-h-64 font-mono text-xs"
+          value={json}
+          onChange={(e) => setJson(e.target.value)}
+          placeholder={
+            '[{"commodity":"Maize","market":"...","price":0,"unit":"kg","observationDate":"YYYY-MM-DD","source":"..."}]'
+          }
+        />
+        <button
+          onClick={submit}
+          className="mt-4 rounded-xl bg-[#0d3b2b] px-5 py-3 font-semibold text-white"
+        >
+          Validate and import
+        </button>
+      </Card>
+      <Card>
+        <h2 className="text-xl font-semibold">Lending program oversight</h2>
+        <p className="mt-2 text-sm leading-6 text-[#66776f]">Review registered farmers and applications shared under explicit farmer consent. Sponsor organizations remain locked until verified. Every review and sensitive dashboard access is audited.</p>
+        {!lending ? <p className="mt-4 text-sm text-[#718077]">Loading administrator records…</p> : <>
+          <div className="mt-5 grid gap-3 sm:grid-cols-3"><Metric label="Registered farmers" value={String(lending.farmers.length)} /><Metric label="Sponsor organizations" value={String(lending.organizations.length)} /><Metric label="Loan applications" value={String(lending.applications.length)} /></div>
+          <h3 className="mt-7 font-semibold">Farmers</h3>
+          <div className="mt-3 max-h-72 overflow-auto rounded-xl border border-[#173d2e]/8"><table className="w-full text-left text-sm"><thead className="sticky top-0 bg-[#edf2ea] text-xs"><tr><th className="px-4 py-3">Farmer</th><th className="px-4 py-3">Farm location / crops</th><th className="px-4 py-3">Records / activity</th><th className="px-4 py-3">Registered</th></tr></thead><tbody>{lending.farmers.map((farmer: any) => <tr key={farmer.id} className="border-t border-[#173d2e]/8"><td className="px-4 py-3">{farmer.name}<span className="block text-xs text-[#718077]">{farmer.email}</span></td><td className="px-4 py-3">{farmer.farm.lga || '—'}, {farmer.farm.state || '—'}<span className="block text-xs text-[#718077]">{farmer.farm.farmName || 'Unnamed farm'} · {(farmer.farm.crops || []).join(', ') || 'No crops recorded'}</span></td><td className="px-4 py-3">{farmer.recordSummary.financialRecordCount} financial<span className="block text-xs text-[#718077]">{farmer.recordSummary.activityCount} activity records</span></td><td className="px-4 py-3">{date(farmer.createdAt)}</td></tr>)}</tbody></table></div>
+          <h3 className="mt-7 font-semibold">Sponsor verification</h3>
+          <div className="mt-3 space-y-3">{lending.organizations.length ? lending.organizations.map((sponsor: any) => <div key={sponsor.userId} className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#f4f6f1] p-4"><div><p className="font-semibold">{sponsor.organizationName}</p><p className="text-xs text-[#718077]">{sponsor.organizationType} · {sponsor.userName} · {sponsor.email} · {sponsor.approvalStatus}</p></div>{sponsor.approvalStatus === 'pending' && <div className="flex gap-2">{(['approved', 'rejected'] as const).map((decision) => <button key={decision} onClick={async () => { try { await apiRequest(`/admin/sponsors/${sponsor.userId}`, { method: 'PATCH', body: JSON.stringify({ decision }) }); const updated = await apiRequest<any>('/admin/lending'); setLending(updated) } catch (error) { setMessage(error instanceof Error ? error.message : 'Review failed') } }} className={`rounded-lg px-3 py-2 text-xs font-semibold capitalize ${decision === 'approved' ? 'bg-[#0d3b2b] text-white' : 'border bg-white'}`}>{decision}</button>)}</div>}</div>) : <Empty text="No sponsor organizations have applied." />}</div>
+          <h3 className="mt-7 font-semibold">Loan applications</h3>
+          <div className="mt-3 space-y-3">{lending.applications.length ? lending.applications.map((application: any) => <div key={application.id} className="rounded-xl border border-[#173d2e]/8 p-4"><div className="flex flex-wrap justify-between gap-3"><div><p className="font-semibold">{application.farmer.name} · {money.format(application.requestedAmount)} · {application.requestedTermMonths} months</p><p className="mt-1 text-xs text-[#718077]">{application.farmer.email} · {application.status} · {date(application.createdAt)}</p><p className="mt-2 text-sm">{application.purpose}</p></div>{application.status === 'submitted' || application.status === 'reviewed' ? <span className="rounded-full bg-[#edf2ea] px-3 py-1 text-xs">Review needed</span> : null}</div>{(application.status === 'submitted' || application.status === 'reviewed') && <div className="mt-3 flex flex-wrap gap-2"><input className="field min-w-56 flex-1" value={reviewNotes[application.id] || ''} onChange={(event) => setReviewNotes((notes) => ({ ...notes, [application.id]: event.target.value }))} placeholder="Review note (required)" /><button onClick={async () => { try { await apiRequest(`/admin/loans/${application.id}`, { method: 'PATCH', body: JSON.stringify({ decision: 'reviewed', reason: reviewNotes[application.id] }) }); setLending(await apiRequest<any>('/admin/lending')) } catch (error) { setMessage(error instanceof Error ? error.message : 'Review failed') } }} className="rounded-lg bg-[#0d3b2b] px-4 py-2 text-sm font-semibold text-white">Mark reviewed</button><button onClick={async () => { try { await apiRequest(`/admin/loans/${application.id}`, { method: 'PATCH', body: JSON.stringify({ decision: 'declined', reason: reviewNotes[application.id] }) }); setLending(await apiRequest<any>('/admin/lending')) } catch (error) { setMessage(error instanceof Error ? error.message : 'Review failed') } }} className="rounded-lg border px-4 py-2 text-sm font-semibold">Decline application</button></div>}</div>) : <Empty text="No loan applications have been submitted." />}</div>
+        </>}
+      </Card>
+    </div>
   )
 }
 

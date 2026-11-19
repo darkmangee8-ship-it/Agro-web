@@ -9,6 +9,7 @@ const sections = [
   'markets',
   'financial',
   'credit',
+  'sponsor',
   'notifications',
   'settings',
   'help',

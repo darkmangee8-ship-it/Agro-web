@@ -2,14 +2,14 @@ import React from 'react'
 import type { Metadata } from 'next'
 import './styles.css'
 
-const title = 'AgroVision AI'
+const title = 'Agro Web'
 const description = 'Smarter Farming. Stronger Farmers. Better Harvests.'
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'),
   title,
   description,
-  icons: { icon: '/favicon.svg' },
+  icons: { icon: '/agroweb-logo.svg', shortcut: '/agroweb-logo.svg' },
   openGraph: {
     title,
     description,

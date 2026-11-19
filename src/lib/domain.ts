@@ -4,6 +4,43 @@ export type FinancialRecord = {
   evidenceStatus?: string
 }
 
+export const LOAN_APPLICATION_REQUIREMENTS = {
+  financialRecords: 4,
+  farmActivities: 3,
+} as const
+
+export function loanApplicationReadiness(
+  profile: Record<string, any> | null,
+  records: FinancialRecord[],
+  activities: unknown[],
+) {
+  const farm = profile ?? {}
+  const hasSales = records.some((record) => record.type === 'sale')
+  const hasExpenses = records.some((record) => record.type === 'expense')
+  const checks = [
+    { id: 'location', label: 'Farm state and local government area', complete: Boolean(farm.state && farm.lga) },
+    { id: 'farm', label: 'Farm size greater than zero hectares or acres', complete: Number(farm.farmSize) > 0 },
+    { id: 'crops', label: 'At least one crop recorded', complete: Array.isArray(farm.crops) && farm.crops.length > 0 },
+    { id: 'transactions', label: `At least ${LOAN_APPLICATION_REQUIREMENTS.financialRecords} sales/expense records`, complete: records.length >= LOAN_APPLICATION_REQUIREMENTS.financialRecords },
+    { id: 'sales', label: 'At least one sale recorded', complete: hasSales },
+    { id: 'expenses', label: 'At least one expense recorded', complete: hasExpenses },
+    { id: 'activities', label: `At least ${LOAN_APPLICATION_REQUIREMENTS.farmActivities} farm activities`, complete: activities.length >= LOAN_APPLICATION_REQUIREMENTS.farmActivities },
+  ]
+  return {
+    ready: checks.every((check) => check.complete),
+    checks,
+    note: 'This checklist measures application completeness only. It is not a credit score, loan eligibility decision, approval, or guarantee of financing. A participating lender makes an independent, human-reviewed decision.',
+  }
+}
+
+export function estimateEqualMonthlyRepayment(principal: number, annualRatePercent: number, months: number) {
+  if (principal <= 0 || months <= 0 || annualRatePercent < 0) return null
+  if (annualRatePercent === 0) return Math.round(principal * 100) / 100
+  const monthlyRate = annualRatePercent / 1200
+  const payment = principal * monthlyRate / (1 - (1 + monthlyRate) ** -months)
+  return Math.round(payment * months * 100) / 100
+}
+
 export function recommendations(profile: Record<string, any>) {
   const now = new Date().toISOString()
   const results = []
