@@ -15,11 +15,15 @@ function createAuth() {
     baseURL: process.env.BETTER_AUTH_URL || process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000',
     secret: secret || 'development-only-secret-change-before-deploying-32-chars',
     trustedOrigins: [
-      process.env.BETTER_AUTH_URL,
-      process.env.NEXT_PUBLIC_SITE_URL,
-      process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined,
-      'http://localhost:3000',
-    ].filter((origin): origin is string => Boolean(origin)),
+  process.env.BETTER_AUTH_URL,
+  process.env.NEXT_PUBLIC_SITE_URL,
+  process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined,
+  process.env.VERCEL_BRANCH_URL ? `https://${process.env.VERCEL_BRANCH_URL}` : undefined,
+  process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : undefined,
+  'http://localhost:3000',
+].filter((origin): origin is string => Boolean(origin)),
     database: drizzleAdapter(getDatabase(), {
       provider: 'pg',
       schema: {
