@@ -143,8 +143,10 @@ export default function AppShell({ section }: { section: string }) {
       </div>
     )
 
-  const visibleSections = sections.filter(([key]) => key !== 'sponsor' || data.user.role === 'sponsor' || data.user.role === 'farmer')
-  const title = section === 'sponsor' && data.user.role !== 'sponsor' ? 'Sponsor Registration' : visibleSections.find(([key]) => key === section)?.[1] ?? 'Dashboard'
+  const visibleSections = data.user.role === 'sponsor'
+    ? sections.filter(([key]) => ['sponsor', 'notifications', 'settings'].includes(key))
+    : sections.filter(([key]) => key !== 'sponsor')
+  const title = visibleSections.find(([key]) => key === section)?.[1] ?? 'Dashboard'
   return (
     <div className="min-h-screen bg-[#f3f5ef] text-[#183a2e]">
       <aside
@@ -240,7 +242,6 @@ export default function AppShell({ section }: { section: string }) {
             <Financial data={data} onSaved={load} setMessage={setMessage} />
           )}
           {section === 'credit' && <Credit assessment={data.assessment} eligibility={data.loanReadiness} />}
-          {section === 'sponsor' && <Sponsor role={data.user.role} setMessage={setMessage} />}
           {section === 'notifications' && <Notifications items={data.notifications} />}
           {section === 'settings' && <SettingsView email={data.user.email} />}
           {section === 'help' && <Help />}
@@ -436,6 +437,13 @@ function Farm({
             .split(',')
             .map((v) => v.trim())
             .filter(Boolean),
+          supportingDocuments: String(form.supportingDocuments || '')
+            .split(',')
+            .map((v) => v.trim())
+            .filter(Boolean),
+          ninLast4: String(form.ninLast4 || '').replace(/\D/g, '').slice(-4),
+          bankAccountLast4: String(form.bankAccountLast4 || '').replace(/\D/g, '').slice(-4),
+          projectedRevenue: form.projectedRevenue ? Number(form.projectedRevenue) : undefined,
           financialConsent: form.financialConsent === 'on',
         }),
       })
@@ -532,39 +540,38 @@ function Farm({
                   placeholder="Maize, cassava"
                 />
               </Field>
-              <Field label="Soil type">
-                <select className="field" name="soilType" defaultValue={p.soilType || ''}>
-                  <option value="">Not known</option>
-                  <option>Clay</option>
-                  <option>Loam</option>
-                  <option>Sandy</option>
-                  <option>Silt</option>
-                </select>
+              <Field label="Livestock type">
+                <input className="field" name="livestockType" defaultValue={p.livestockType} placeholder="Poultry, cattle, fish" />
               </Field>
-              <Field label="Irrigation">
-                <select className="field" name="irrigation" defaultValue={p.irrigation || 'none'}>
-                  <option value="none">Rain-fed / none</option>
-                  <option value="partial">Partial irrigation</option>
-                  <option value="available">Irrigation available</option>
-                </select>
+              <Field label="Planting date">
+                <input className="field" name="plantingDate" type="date" defaultValue={p.plantingDate} />
               </Field>
-              <Field label="Latitude">
-                <input
-                  className="field"
-                  name="latitude"
-                  type="number"
-                  step="any"
-                  defaultValue={p.latitude}
-                />
+              <Field label="Expected harvest date">
+                <input className="field" name="expectedHarvestDate" type="date" defaultValue={p.expectedHarvestDate} />
               </Field>
-              <Field label="Longitude">
-                <input
-                  className="field"
-                  name="longitude"
-                  type="number"
-                  step="any"
-                  defaultValue={p.longitude}
-                />
+              <Field label="Projected revenue (NGN)">
+                <input className="field" name="projectedRevenue" type="number" min="0" step="0.01" defaultValue={p.projectedRevenue} />
+              </Field>
+              <Field label="Projection evidence">
+                <input className="field" name="projectionEvidence" defaultValue={p.projectionEvidence} placeholder="Market report, contract or written estimate" />
+              </Field>
+              <Field label="Farm address" wide>
+                <input className="field" name="address" defaultValue={p.address} placeholder="Full farm or operational address" />
+              </Field>
+              <Field label="NIN — last 4 digits only">
+                <input className="field" name="ninLast4" inputMode="numeric" maxLength={4} pattern="[0-9]{4}" defaultValue={p.ninLast4} placeholder="1234" />
+              </Field>
+              <Field label="Bank account name">
+                <input className="field" name="bankAccountName" defaultValue={p.bankAccountName} />
+              </Field>
+              <Field label="Bank name">
+                <input className="field" name="bankName" defaultValue={p.bankName} />
+              </Field>
+              <Field label="Bank account — last 4 digits only">
+                <input className="field" name="bankAccountLast4" inputMode="numeric" maxLength={4} pattern="[0-9]{4}" defaultValue={p.bankAccountLast4} placeholder="6789" />
+              </Field>
+              <Field label="Supporting document references (comma separated)" wide>
+                <input className="field" name="supportingDocuments" defaultValue={(p.supportingDocuments || []).join(', ')} placeholder="Farm certificate, cooperative letter" />
               </Field>
               <label className="flex gap-3 text-xs leading-5 sm:col-span-2">
                 <input
@@ -599,16 +606,31 @@ function Farm({
                   <option>Fertilizer application</option>
                   <option>Pest observation</option>
                   <option>Harvest</option>
+                  <option>Livestock production</option>
+                  <option>Loss</option>
                 </select>
               </Field>
               <Field label="Date">
                 <input className="field" type="date" name="date" required />
               </Field>
-              <Field label="Crop">
+              <Field label="Crop or livestock">
                 <input className="field" name="crop" />
               </Field>
-              <Field label="Notes">
-                <textarea className="field min-h-24" name="notes" />
+              <Field label="Quantity">
+                <input className="field" name="quantity" type="number" min="0" step="0.01" />
+              </Field>
+              <Field label="Unit">
+                <select className="field" name="unit" defaultValue="kg">
+                  <option value="kg">Kilograms</option>
+                  <option value="tonnes">Tonnes</option>
+                  <option value="bags">Bags</option>
+                  <option value="litres">Litres</option>
+                  <option value="heads">Heads</option>
+                  <option value="units">Units</option>
+                </select>
+              </Field>
+              <Field label="Loss quantity (if applicable)">
+                <input className="field" name="lossQuantity" type="number" min="0" step="0.01" defaultValue="0" />
               </Field>
               <button
                 disabled={busy}
@@ -745,7 +767,7 @@ function Weather({ weather, profile }: { weather: any; profile: any }) {
                 <p className="text-xs text-[#718077]">
                   {new Date(`${d}T12:00:00`).toLocaleDateString('en-NG', { weekday: 'short' })}
                 </p>
-                <CloudSun className="mx-auto my-3 text-[#b17e25]" size={22} />
+                <CloudSun className="mx-auto my-3 text-[#b17d25]" size={22} />
                 <p className="text-sm font-semibold">
                   {Math.round(weather.daily.temperature_2m_max[i])}° /{' '}
                   {Math.round(weather.daily.temperature_2m_min[i])}°
@@ -994,7 +1016,14 @@ function Credit({ assessment, eligibility }: { assessment: any; eligibility: Boo
     setMessage('')
     try {
       const body = Object.fromEntries(new FormData(event.currentTarget))
-      await apiRequest('/loans', { method: 'POST', body: JSON.stringify({ ...body, shareWithSponsors: body.shareWithSponsors === 'on' }) })
+      await apiRequest('/loans', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...body,
+          supportingDocuments: String(body.supportingDocuments || '').split(',').map((value) => value.trim()).filter(Boolean),
+          shareWithSponsors: body.shareWithSponsors === 'on',
+        }),
+      })
         ; (event.currentTarget as HTMLFormElement).reset()
       setMessage('Your application was submitted to approved sponsors.')
       const result = await apiRequest<{ items: any[] }>('/loans')
@@ -1089,6 +1118,14 @@ function Credit({ assessment, eligibility }: { assessment: any; eligibility: Boo
         </ul>
         {eligibility.ready ? (
           <form onSubmit={apply} className="mt-6 grid gap-4 border-t border-[#173d2e]/8 pt-5 md:grid-cols-2">
+            <Field label="Full legal name"><input className="field" name="fullName" minLength={2} required /></Field>
+            <Field label="Phone number"><input className="field" name="phone" type="tel" minLength={7} maxLength={30} required /></Field>
+            <Field label="NIN — last 4 digits only"><input className="field" name="ninLast4" inputMode="numeric" maxLength={4} pattern="[0-9]{4}" required placeholder="1234" /></Field>
+            <Field label="Farm address" wide><input className="field" name="farmAddress" minLength={5} maxLength={300} required /></Field>
+            <Field label="Bank name"><input className="field" name="bankName" minLength={2} required /></Field>
+            <Field label="Bank account name"><input className="field" name="bankAccountName" minLength={2} required /></Field>
+            <Field label="Bank account — last 4 digits only"><input className="field" name="bankAccountLast4" inputMode="numeric" maxLength={4} pattern="[0-9]{4}" required placeholder="6789" /></Field>
+            <Field label="Supporting document references (comma separated)" wide><input className="field" name="supportingDocuments" minLength={2} required placeholder="ID document, farm certificate, cooperative letter" /></Field>
             <Field label="Amount requested (NGN)"><input className="field" name="requestedAmount" type="number" min="1" max="99999999999999" step="0.01" required /></Field>
             <Field label="Repayment period"><select className="field" name="requestedTermMonths" defaultValue="6">{[3, 6, 9, 12, 18, 24, 36, 48, 60].map((months) => <option key={months} value={months}>{months} months</option>)}</select></Field>
             <Field label="How will you use the loan?" wide><textarea className="field min-h-24" name="purpose" minLength={10} maxLength={1000} required placeholder="Describe the farm costs or investment this will support." /></Field>
@@ -1298,8 +1335,17 @@ function Admin({ role, setMessage }: { role: string; setMessage: (s: string) => 
           <h3 className="mt-7 font-semibold">Sponsor verification</h3>
           <div className="mt-3 space-y-3">{lending.organizations.length ? lending.organizations.map((sponsor: any) => <div key={sponsor.userId} className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#f4f6f1] p-4"><div><p className="font-semibold">{sponsor.organizationName}</p><p className="text-xs text-[#718077]">{sponsor.organizationType} · {sponsor.userName} · {sponsor.email} · {sponsor.approvalStatus}</p></div>{sponsor.approvalStatus === 'pending' && <div className="flex gap-2">{(['approved', 'rejected'] as const).map((decision) => <button key={decision} onClick={async () => { try { await apiRequest(`/admin/sponsors/${sponsor.userId}`, { method: 'PATCH', body: JSON.stringify({ decision }) }); const updated = await apiRequest<any>('/admin/lending'); setLending(updated) } catch (error) { setMessage(error instanceof Error ? error.message : 'Review failed') } }} className={`rounded-lg px-3 py-2 text-xs font-semibold capitalize ${decision === 'approved' ? 'bg-[#0d3b2b] text-white' : 'border bg-white'}`}>{decision}</button>)}</div>}</div>) : <Empty text="No sponsor organizations have applied." />}</div>
           <h3 className="mt-7 font-semibold">Loan applications</h3>
-          <div className="mt-3 space-y-3">{lending.applications.length ? lending.applications.map((application: any) => <div key={application.id} className="rounded-xl border border-[#173d2e]/8 p-4"><div className="flex flex-wrap justify-between gap-3"><div><p className="font-semibold">{application.farmer.name} · {money.format(application.requestedAmount)} · {application.requestedTermMonths} months</p><p className="mt-1 text-xs text-[#718077]">{application.farmer.email} · {application.status} · {date(application.createdAt)}</p><p className="mt-2 text-sm">{application.purpose}</p></div>{application.status === 'submitted' || application.status === 'reviewed' ? <span className="rounded-full bg-[#edf2ea] px-3 py-1 text-xs">Review needed</span> : null}</div>{(application.status === 'submitted' || application.status === 'reviewed') && <div className="mt-3 flex flex-wrap gap-2"><input className="field min-w-56 flex-1" value={reviewNotes[application.id] || ''} onChange={(event) => setReviewNotes((notes) => ({ ...notes, [application.id]: event.target.value }))} placeholder="Review note (required)" /><button onClick={async () => { try { await apiRequest(`/admin/loans/${application.id}`, { method: 'PATCH', body: JSON.stringify({ decision: 'reviewed', reason: reviewNotes[application.id] }) }); setLending(await apiRequest<any>('/admin/lending')) } catch (error) { setMessage(error instanceof Error ? error.message : 'Review failed') } }} className="rounded-lg bg-[#0d3b2b] px-4 py-2 text-sm font-semibold text-white">Mark reviewed</button><button onClick={async () => { try { await apiRequest(`/admin/loans/${application.id}`, { method: 'PATCH', body: JSON.stringify({ decision: 'declined', reason: reviewNotes[application.id] }) }); setLending(await apiRequest<any>('/admin/lending')) } catch (error) { setMessage(error instanceof Error ? error.message : 'Review failed') } }} className="rounded-lg border px-4 py-2 text-sm font-semibold">Decline application</button></div>}</div>) : <Empty text="No loan applications have been submitted." />}</div>
-        </>}
+          <div className="mt-3 space-y-3">
+            {lending.applications.length ? lending.applications.map((application: any) => (
+              <div key={application.id} className="rounded-xl border border-[#173d2e]/8 p-4">
+                <p className="font-semibold">{application.farmer.name} · {money.format(application.requestedAmount)} · {application.requestedTermMonths} months</p>
+                <p className="mt-1 text-xs text-[#718077]">{application.status} · {date(application.createdAt)}</p>
+                <p className="mt-2 text-sm">{application.purpose}</p>
+              </div>
+            )) : <Empty text="No loan applications have been submitted." />}
+          </div>
+        </>
+        }
       </Card>
     </div>
   )

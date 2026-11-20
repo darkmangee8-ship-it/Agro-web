@@ -7,7 +7,73 @@ export type FinancialRecord = {
 export const LOAN_APPLICATION_REQUIREMENTS = {
   financialRecords: 4,
   farmActivities: 3,
+  productionHistory: 3,
 } as const
+
+export type FarmPerformance = {
+  revenue: number
+  expenses: number
+  profit: number
+  salesCount: number
+  expenseCount: number
+  harvestQuantity: number
+  yieldPerUnit: number | null
+  losses: number
+  productivityScore: number
+  profitabilityScore: number
+  consistencyScore: number
+  overallScore: number
+}
+
+export function calculateFarmPerformance(
+  profile: Record<string, any> | null,
+  records: FinancialRecord[],
+  activities: unknown[],
+): FarmPerformance {
+  const sales = records.filter((record) => record.type === 'sale')
+  const expenses = records.filter((record) => record.type === 'expense')
+  const revenue = sales.reduce((sum, record) => sum + Number(record.amount || 0), 0)
+  const costs = expenses.reduce((sum, record) => sum + Number(record.amount || 0), 0)
+  const activityRows = activities as Array<Record<string, any>>
+  const harvestRows = activityRows.filter((row) => String(row.type).toLowerCase().includes('harvest'))
+  const harvestQuantity = harvestRows.reduce((sum, row) => sum + Number(row.quantity || 0), 0)
+  const losses = activityRows.reduce((sum, row) => sum + Number(row.lossQuantity || 0), 0)
+  const farmSize = Number(profile?.farmSize || 0)
+  const yieldPerUnit = harvestQuantity > 0 && farmSize > 0 ? harvestQuantity / farmSize : null
+
+  const productivityScore = Math.round(
+    (harvestRows.length ? 35 : 0) +
+    (harvestQuantity > 0 ? 35 : 0) +
+    (yieldPerUnit !== null ? 30 : 0),
+  )
+  const profitabilityScore = revenue <= 0
+    ? 0
+    : Math.round(Math.min(100, Math.max(0, ((revenue - costs) / revenue) * 100)))
+  const consistencyScore = Math.round(
+    Math.min(100,
+      (sales.length ? 25 : 0) +
+      (expenses.length ? 25 : 0) +
+      (activityRows.length >= LOAN_APPLICATION_REQUIREMENTS.productionHistory ? 30 : activityRows.length * 10) +
+      (records.length >= LOAN_APPLICATION_REQUIREMENTS.financialRecords ? 20 : records.length * 5),
+    ),
+  )
+  const overallScore = Math.round(productivityScore * 0.35 + profitabilityScore * 0.35 + consistencyScore * 0.30)
+
+  return {
+    revenue,
+    expenses: costs,
+    profit: revenue - costs,
+    salesCount: sales.length,
+    expenseCount: expenses.length,
+    harvestQuantity,
+    yieldPerUnit,
+    losses,
+    productivityScore,
+    profitabilityScore,
+    consistencyScore,
+    overallScore,
+  }
+}
 
 export function loanApplicationReadiness(
   profile: Record<string, any> | null,
@@ -15,21 +81,58 @@ export function loanApplicationReadiness(
   activities: unknown[],
 ) {
   const farm = profile ?? {}
-  const hasSales = records.some((record) => record.type === 'sale')
-  const hasExpenses = records.some((record) => record.type === 'expense')
+  const performance = calculateFarmPerformance(farm, records, activities)
+  const hasSales = performance.salesCount > 0
+  const hasExpenses = performance.expenseCount > 0
+  const profitable = performance.profit > 0
+  const projection = Number(farm.projectedRevenue)
+  const hasProjection = Number.isFinite(projection) && projection > 0
+  const ninLast4 = String(farm.ninLast4 ?? '').replace(/\D/g, '')
+  const bankLast4 = String(farm.bankAccountLast4 ?? '').replace(/\D/g, '')
+  const hasDocumentSupport = Array.isArray(farm.supportingDocuments) && farm.supportingDocuments.length >= 1
   const checks = [
-    { id: 'location', label: 'Farm state and local government area', complete: Boolean(farm.state && farm.lga) },
-    { id: 'farm', label: 'Farm size greater than zero hectares or acres', complete: Number(farm.farmSize) > 0 },
-    { id: 'crops', label: 'At least one crop recorded', complete: Array.isArray(farm.crops) && farm.crops.length > 0 },
-    { id: 'transactions', label: `At least ${LOAN_APPLICATION_REQUIREMENTS.financialRecords} sales/expense records`, complete: records.length >= LOAN_APPLICATION_REQUIREMENTS.financialRecords },
-    { id: 'sales', label: 'At least one sale recorded', complete: hasSales },
-    { id: 'expenses', label: 'At least one expense recorded', complete: hasExpenses },
-    { id: 'activities', label: `At least ${LOAN_APPLICATION_REQUIREMENTS.farmActivities} farm activities`, complete: activities.length >= LOAN_APPLICATION_REQUIREMENTS.farmActivities },
+    { id: 'identity', label: 'Identity and personal details verified', complete: farm.identityVerified === true && /^\d{4}$/.test(ninLast4) && Boolean(farm.fullName) },
+    { id: 'location', label: 'Complete farm address (state, LGA and address)', complete: Boolean(farm.state && farm.lga && farm.address) },
+    { id: 'farm', label: 'Farm size and crop or livestock production recorded', complete: Number(farm.farmSize) > 0 && Boolean(farm.crops?.length || farm.livestockType) },
+    { id: 'production-history', label: `Production history (${LOAN_APPLICATION_REQUIREMENTS.productionHistory} activities)`, complete: activities.length >= LOAN_APPLICATION_REQUIREMENTS.productionHistory },
+    { id: 'transactions', label: `Complete financial history (${LOAN_APPLICATION_REQUIREMENTS.financialRecords} records)`, complete: records.length >= LOAN_APPLICATION_REQUIREMENTS.financialRecords },
+    { id: 'sales', label: 'At least one recorded sale', complete: hasSales },
+    { id: 'expenses', label: 'At least one recorded expense', complete: hasExpenses },
+    { id: 'projection', label: 'Realistic, documented financial projection', complete: hasProjection && Boolean(farm.projectionEvidence) },
+    { id: 'profitability', label: 'Positive recorded operating profit or repayment capacity', complete: profitable },
+    { id: 'bank', label: 'Valid, verified bank account details', complete: farm.bankVerified === true && /^\d{4}$/.test(bankLast4) && Boolean(farm.bankName && farm.bankAccountName) },
+    { id: 'documents', label: 'Required supporting documents supplied', complete: hasDocumentSupport },
   ]
+  const ready = checks.every((check) => check.complete)
+  const score = Math.round((checks.filter((check) => check.complete).length / checks.length) * 100)
+  const reasons = ready
+    ? ['All required eligibility checks are complete.', 'The application remains subject to sponsor review and independent verification.']
+    : checks.filter((check) => !check.complete).map((check) => `${check.label} is incomplete.`)
+  const improvements = checks.filter((check) => !check.complete).map((check) => ({
+    id: check.id,
+    action: {
+      identity: 'Request identity verification and provide the required NIN evidence.',
+      location: 'Add your full farm address, state and local government area.',
+      farm: 'Record farm size and at least one crop or livestock type.',
+      'production-history': 'Record planting, production and harvest activities across at least three entries.',
+      transactions: 'Record at least four sales or expense entries.',
+      sales: 'Add a sale or harvest revenue record.',
+      expenses: 'Add farm expenses such as inputs or transport.',
+      projection: 'Provide a realistic projected revenue and supporting evidence.',
+      profitability: 'Improve the documented operating surplus and repayment capacity.',
+      bank: 'Supply and request verification of the required bank account information.',
+      documents: 'Supply at least one supporting farm or identity document through the secure process.',
+    }[check.id] ?? `Complete ${check.label.toLowerCase()}.`,
+  }))
+
   return {
-    ready: checks.every((check) => check.complete),
+    ready,
+    score,
     checks,
-    note: 'This checklist measures application completeness only. It is not a credit score, loan eligibility decision, approval, or guarantee of financing. A participating lender makes an independent, human-reviewed decision.',
+    reasons,
+    improvements,
+    performance,
+    note: 'This transparent readiness assessment is not a credit score or guarantee of financing. Verification decisions require independent review.',
   }
 }
 

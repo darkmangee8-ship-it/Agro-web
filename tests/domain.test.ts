@@ -50,7 +50,13 @@ describe('loan application readiness', () => {
       { type: 'expense', amount: 10 },
     ]
     const result = loanApplicationReadiness(
-      { state: 'Kaduna', lga: 'Zaria', farmSize: 2, crops: ['Maize'] },
+      {
+        state: 'Kaduna', lga: 'Zaria', address: 'Zaria farm road', farmSize: 2,
+        crops: ['Maize'], fullName: 'Test Farmer', identityVerified: true, ninLast4: '1234',
+        projectedRevenue: 200, projectionEvidence: 'Verified buyer contract',
+        bankVerified: true, bankName: 'Test Bank', bankAccountName: 'Test Farmer', bankAccountLast4: '6789',
+        supportingDocuments: ['Farm certificate'],
+      },
       records,
       [{}, {}, {}],
     )
@@ -61,7 +67,7 @@ describe('loan application readiness', () => {
   it('identifies missing application records', () => {
     const result = loanApplicationReadiness(null, [], [])
     expect(result.ready).toBe(false)
-    expect(result.checks.filter((check) => !check.complete)).toHaveLength(7)
+    expect(result.checks.filter((check) => !check.complete)).toHaveLength(11)
   })
 })
 

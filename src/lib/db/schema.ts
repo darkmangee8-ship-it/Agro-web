@@ -107,6 +107,8 @@ export const loanRequests = pgTable('loan_requests', {
   requestedTermMonths: integer('requested_term_months').notNull(),
   purpose: text('purpose').notNull(),
   repaymentPlan: text('repayment_plan').notNull(),
+  applicantDetails: jsonb('applicant_details').$type<Record<string, unknown>>().notNull().default({}),
+  supportingDocuments: jsonb('supporting_documents').$type<Array<Record<string, unknown>>>().notNull().default([]),
   sponsorConsentAt: timestamp('sponsor_consent_at', { withTimezone: true }).notNull(),
   sponsorConsent: boolean('sponsor_consent').notNull().default(true),
   status: text('status').notNull().default('submitted'),
